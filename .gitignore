@@ -1,0 +1,6 @@
+recordings/
+draft.txt
+draft_polished.txt
+__pycache__/
+*.pyc
+*.wav
