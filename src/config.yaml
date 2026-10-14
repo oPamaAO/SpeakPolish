@@ -33,9 +33,12 @@ polish:
   agent: "prompt-polisher"
   model: "opencode/muse-spark-1.3-contributor-free"
   # команда: opencode run --agent prompt-polisher -m <model>
-  # mode: replace = выделить всё в поле ввода (Home, Shift+End) и ЗАМЕНИТЬ;
+  # mode: replace = выделить всё в поле ввода и ЗАМЕНИТЬ;
   #       append = вставить после существующего текста. Нужен фокус в поле ввода.
   mode: replace
+  # delete_before_paste: true = Ctrl+A, Backspace, Ctrl+V (проверено вживую в opencode);
+  #   false = вставка поверх выделения. По умолчанию true.
+  delete_before_paste: true
 
 hotkeys:
   record_toggle: "F9"          # нажал — запись, нажал ещё раз — стоп, кусок ДОПИСАЛСЯ

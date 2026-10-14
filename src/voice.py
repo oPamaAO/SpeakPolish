@@ -86,6 +86,7 @@ def get_cfg():
         "agent": polish.get("agent", DEFAULTS["agent"]),
         "agent_model": polish.get("model", DEFAULTS["agent_model"]),
         "polish_mode": polish.get("mode", DEFAULTS.get("polish_mode", "replace")),
+        "delete_before_paste": polish.get("delete_before_paste", True),
         "terminology_file": paths.get("terminology", DEFAULTS["terminology_file"]),
     })
     return _config_cache
@@ -309,37 +310,76 @@ def clear_draft():
 
 
 # --- Вставка в активное окно ----------------------------------------------------
+def archive_and_clear_draft(keep=20):
+    """Черновик — одноразовый: после успешной полировки уезжает в history/,
+    draft.txt очищается. Иначе старые задачи вечно подмешиваются в новые
+    полировки («агент тянет предыдущее»). Храним последние `keep`."""
+    from datetime import datetime
+    hist = os.path.join(BASE_DIR, "history")
+    os.makedirs(hist, exist_ok=True)
+    text = read_draft()
+    if text.strip():
+        name = datetime.now().strftime("draft_%Y%m%d_%H%M%S_%f")[:-3] + ".txt"
+        try:
+            with open(os.path.join(hist, name), "w", encoding="utf-8") as f:
+                f.write(text)
+        except Exception as e:
+            print(f"[voice] Не смог сохранить историю: {e}")
+            return False
+    try:
+        with open(DRAFT_PATH, "w", encoding="utf-8") as f:
+            f.write("")
+    except Exception as e:
+        print(f"[voice] Не смог очистить черновик: {e}")
+        return False
+    try:
+        files = sorted(f for f in os.listdir(hist) if f.endswith(".txt"))
+        for old in files[:-keep]:
+            os.remove(os.path.join(hist, old))
+    except Exception:
+        pass
+    return True
+
+
+def normalize_polish_layout(text):
+    """Чинит склейки вида '## ЦельУстранить...': JSON-события режут текст
+    в произвольных местах, а склейка без разделителя склеивает заголовок
+    с текстом. Известные разделы допиливаются принудительно."""
+    import re
+    sections = ["Цель", "Контекст", "Задачи", "Ожидаемый результат",
+                "Ограничения", "?? Уточнить"]
+    text = re.sub(r"[ \t]*##[ \t]*", "\n## ", text)  # каждый заголовок с новой строки
+    for s in sections:
+        text = re.sub(r"## " + re.escape(s) + r"(?=\S)", "## " + s + "\n", text)
+        # тело раздела на той же строке ("## Цель Создать...") — переносим вниз
+        text = re.sub(r"^(## " + re.escape(s) + r")[ \t]+(\S.*)$", r"\1\n\2",
+                      text, flags=re.MULTILINE)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def _select_all_input(quick=False):
-    """Выделить весь ввод: End (точно в конец), Home, Shift+End (последняя
-    строка), Shift+Up с запасом (до 60 строк). Курсор всегда в конце
-    многострочного поля, а Home даёт начало строки — иначе хвост не накроет.
-    Shift освобождаем в finally: залипший Shift ломал бы весь дальнейший ввод."""
+    """Выделить весь ввод: Ctrl+A. Проверено вживую в приложении opencode —
+    там это работает как select-all. Больше никаких End/Home/Up-связок."""
     import time
     import keyboard
-    d = 0.01 if quick else 0.1
-    keyboard.press_and_release("end")
-    time.sleep(d)
-    keyboard.press_and_release("home")
-    time.sleep(d)
-    keyboard.press("shift")
-    try:
-        keyboard.press_and_release("end")
-        for _ in range(60):
-            keyboard.press_and_release("up")
-            time.sleep(0.01 if quick else 0.03)
-    finally:
-        try:
-            keyboard.release("shift")
-        except Exception:
-            pass
+    keyboard.press_and_release("ctrl+a")
+    time.sleep(0.05 if quick else 0.15)
+    keyboard.press_and_release("ctrl+a")
     if not quick:
         time.sleep(0.15)
 
 
-def paste_to_active_window(text, replace=False):
+def paste_to_active_window(text, replace=False, delete_first=False):
     """Вставка через буфер обмена.
     replace=False — вставить в позицию курсора (для кусков диктовки).
-    replace=True  — выделить всё поле ввода (Home, Shift+End) и заменить
+    replace=True  — выделить всё поле ввода и заменить.
+    delete_first=True — после выделения нажать Backspace перед вставкой
+      (твой «простой» вариант; по умолчанию выкл: при неполном выделении
+      Backspace СТИРАЕТ выделенное, а вставка-поверх — только дублирует)."""
+    """Вставка через буфер обмена.
+    replace=False — вставить в позицию курсора (для кусков диктовки).
+    replace=True  — выделить всё поле ввода (End, Shift+Home до границ буфера) и заменить
                     (для полировки). Работает, когда фокус в поле ввода opencode;
                     иначе — обычная вставка."""
     import time
@@ -357,6 +397,9 @@ def paste_to_active_window(text, replace=False):
             _select_all_input(quick=True)
             import time
             time.sleep(0.05)
+        if replace and delete_first:
+            keyboard.press_and_release("backspace")
+            time.sleep(0.1)
         keyboard.press_and_release("ctrl+v")
     except Exception as e:
         print(f"[voice] Скопировано в буфер (автовставка не сработала: {e}). Нажми Ctrl+V сам.")
@@ -695,6 +738,7 @@ def polish_text(text, source="текст"):
         if not out:
             # json не распарсился — запасной путь с чисткой служебных строк
             out = strip_console_chrome(out_raw)
+        out = normalize_polish_layout(out)  # чиним склейки вида '## ЦельТекст'
         if "free tier can only be used" in out + err:
             print("[voice] Free-tier guard: opencode run отклонён. Черновик цел — "
                   "вставь его в TUI и вызови /polish там (внутри OpenCode лимита нет).")
@@ -704,6 +748,10 @@ def polish_text(text, source="текст"):
             return
         with open(POLISHED_PATH, "w", encoding="utf-8") as f:
             f.write(out)
+        if source == "черновик":
+            # Черновик одноразовый: иначе старые задачи вечно лезут в новые полировки.
+            if archive_and_clear_draft():
+                print("[voice] Черновик ушёл в history/ и очищен — диктуй новое.")
         replace = cfg.get("polish_mode", "replace") == "replace"
         if replace:
             # Даём 2 секунды вернуть фокус в поле ввода opencode — замена бьёт
@@ -713,7 +761,8 @@ def polish_text(text, source="текст"):
             print("[voice] Фокус в поле ввода! Замена через 2 сек — не трогай клавиатуру...")
             import time
             time.sleep(2.0)
-        paste_to_active_window(out, replace=replace)
+        paste_to_active_window(out, replace=replace,
+                                 delete_first=cfg.get("delete_before_paste", False))
         how = "заменил текст в поле ввода" if replace else "вставил после текста"
         print(f"[voice] Готово, «конфетка» {how} (копия: draft_polished.txt).")
         if replace:
@@ -725,7 +774,7 @@ def polish_text(text, source="текст"):
 
 
 # --- main --------------------------------------------------------------------------
-BUILD = "2026-10-15j"  # метка сборки: видна при старте, по ней проверяем, что запущен новый код
+BUILD = "2026-10-15n"  # метка сборки: видна при старте, по ней проверяем, что запущен новый код
 
 
 def _preload_model():
