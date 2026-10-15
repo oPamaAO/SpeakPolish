@@ -348,6 +348,11 @@ def normalize_polish_layout(text):
     import re
     sections = ["Цель", "Контекст", "Задачи", "Ожидаемый результат",
                 "Ограничения", "?? Уточнить"]
+    text = text.replace("\u200b", "").replace("\u2060", "").replace("\ufeff", "")
+    # "**Цель** ..." вместо заголовка — приводим к "## Цель"
+    for s in sections:
+        text = re.sub(r"^\*{1,2}\s*" + re.escape(s) + r"\s*\*{1,2}[ \t]*:?[ \t]*",
+                      "## " + s + "\n", text, flags=re.MULTILINE)
     # "### Цель" -> "## Цель" СНАЧАЛА, иначе правило ниже съест два # из трёх
     for s in sections:
         text = re.sub(r"^#{3,} " + re.escape(s), "## " + s, text, flags=re.MULTILINE)
@@ -745,6 +750,14 @@ def polish_text(text, source="текст"):
             # json не распарсился — запасной путь с чисткой служебных строк
             out = strip_console_chrome(out_raw)
         out = normalize_polish_layout(out)  # чиним склейки вида '## ЦельТекст'
+        # Диагностический след: сырой вывод + итог. Если склейка вылезет снова —
+        # по этому файлу будет видно, что выдала модель, а что сделал нормалайз.
+        try:
+            with open(os.path.join(BASE_DIR, "polish_debug_last.txt"), "w",
+                      encoding="utf-8") as f:
+                f.write("=== RAW ===\n" + out_raw + "\n=== PARSED ===\n" + out)
+        except Exception:
+            pass
         if "free tier can only be used" in out + err:
             print("[voice] Free-tier guard: opencode run отклонён. Черновик цел — "
                   "вставь его в TUI и вызови /polish там (внутри OpenCode лимита нет).")
@@ -780,7 +793,7 @@ def polish_text(text, source="текст"):
 
 
 # --- main --------------------------------------------------------------------------
-BUILD = "2026-10-15o"  # метка сборки: видна при старте, по ней проверяем, что запущен новый код
+BUILD = "2026-10-15p"  # метка сборки: видна при старте, по ней проверяем, что запущен новый код
 
 
 def _preload_model():
