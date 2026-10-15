@@ -36,6 +36,9 @@ if errorlevel 1 (
 echo === [4/6] Copying files to opencode config folder ===
 set VDIR=%USERPROFILE%\.config\opencode\voice
 if not exist "%VDIR%" mkdir "%VDIR%"
+rem Backup user-tuned files before overwrite (reinstall keeps your dictionary/config):
+if exist "%VDIR%\config.yaml" copy /y "%VDIR%\config.yaml" "%VDIR%\config.yaml.bak" >nul
+if exist "%VDIR%\terminology.yaml" copy /y "%VDIR%\terminology.yaml" "%VDIR%\terminology.yaml.bak" >nul
 copy /y src\voice.py "%VDIR%\" >nul
 copy /y src\config.yaml "%VDIR%\" >nul
 copy /y src\terminology.yaml "%VDIR%\" >nul
@@ -47,6 +50,9 @@ if not exist "%USERPROFILE%\.config\opencode\agents" mkdir "%USERPROFILE%\.confi
 copy /y assets\agents\prompt-polisher.md "%USERPROFILE%\.config\opencode\agents\" >nul
 if not exist "%USERPROFILE%\.config\opencode\commands" mkdir "%USERPROFILE%\.config\opencode\commands"
 copy /y assets\commands\polish.md "%USERPROFILE%\.config\opencode\commands\" >nul
+rem Compat: some setups read singular command\ instead of commands\ - put it there too:
+if not exist "%USERPROFILE%\.config\opencode\command" mkdir "%USERPROFILE%\.config\opencode\command"
+copy /y assets\commands\polish.md "%USERPROFILE%\.config\opencode\command\" >nul
 echo Done: files are in place.
 
 echo === [5/6] Shortcut and autostart ===
